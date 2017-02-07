@@ -1,0 +1,5 @@
+#!/bin/bash
+
+@PROJECT_BINARY_DIR@/sonarlog_pipeline \
+--input-files=/arquivos/Logs/gemini/dataset_gustavo/logs/20160316-1127-06925_07750-gemini.0.log \
+--stream-name="gemini.sonar_samples"

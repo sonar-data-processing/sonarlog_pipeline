@@ -1,0 +1,13 @@
+#!/bin/bash
+
+@PROJECT_BINARY_DIR@/sonarlog_pipeline \
+    --input-files=@WORKSPACE_DATA_PATH@/logs/gemini-jequitaia.0.log \
+    --input-files=@WORKSPACE_DATA_PATH@/logs/gemini-jequitaia.4.log \
+    --input-files=@WORKSPACE_DATA_PATH@/logs/gemini-ferry.0.log \
+    --input-files=@WORKSPACE_DATA_PATH@/logs/gemini-ferry.3.log \
+    --stream-name="gemini.sonar_samples"
+# --input-files=@WORKSPACE_DATA_PATH@/logs/calibration.0.log \
+
+# @PROJECT_BINARY_DIR@/sonarlog_pipeline \
+#     --input-files=@WORKSPACE_DATA_PATH@/logs/output.0.log \
+#     --stream-name="multibeam_sonar_imager.sonar_samples"

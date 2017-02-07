@@ -1,0 +1,6 @@
+#!/bin/bash
+
+/home/romulo/workspace/sonar_toolkit/sonarlog_pipeline/build/sonarlog_pipeline \
+    --input-files=/home/romulo/workspace/sonar_toolkit/data/logs/balsa.0.log \
+    --input-files=/home/romulo/workspace/sonar_toolkit/data/logs/gemini-ferry.0.log \
+    --stream-name="gemini.sonar_samples"

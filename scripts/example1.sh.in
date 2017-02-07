@@ -1,0 +1,8 @@
+#!/bin/bash
+
+@PROJECT_BINARY_DIR@/sonarlog_target_tracking \
+    --input-files=@WORKSPACE_DATA_PATH@/logs/gemini-jequitaia.1.log \
+    --input-files=@WORKSPACE_DATA_PATH@/logs/gemini-jequitaia.3.log \
+    --input-files=@WORKSPACE_DATA_PATH@/logs/gemini-ferry.1.log \
+    --input-files=@WORKSPACE_DATA_PATH@/logs/gemini-ferry.2.log \
+    --stream-name="gemini.sonar_samples"
