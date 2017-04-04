@@ -5,6 +5,7 @@
 #include <ctime>
 #include <limits>
 
+// opencv includes
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -84,14 +85,13 @@ cv::Mat generateRandomImage(cv::Size size, unsigned int num_white_pixels, bool s
         return cv::Mat();
 
     cv::Mat sample = cv::Mat::zeros(size, CV_8U);
-    // paint random pixels
     std::srand(std::time(0)); // use current time as seed for random generator
     for (size_t i = 0; i < num_white_pixels; i++) {
-        unsigned int rand_x = std::rand() % (sample.cols / 50) + sample.cols * 0.5;
+        unsigned int rand_x = std::rand() % sample.cols;
         unsigned int rand_y = std::rand() % sample.rows;
-        unsigned int rand_x2 = std::rand() % sample.cols;
-        sample.at<uint8_t>(rand_x,  rand_y) = 255;
-        sample.at<uint8_t>(rand_x2, rand_y) = 255;
+        unsigned int rand_y2 = std::rand() % (sample.rows / 50) + sample.cols * 0.5;
+        sample.at<uint8_t>(rand_x, rand_y) = 255;
+        sample.at<uint8_t>(rand_x, rand_y2) = 255;
     }
 
     if (save_file)
@@ -101,12 +101,28 @@ cv::Mat generateRandomImage(cv::Size size, unsigned int num_white_pixels, bool s
 }
 
 void drawStraightLine(cv::Mat& img, const std::pair<cv::Point, cv::Point>& best_model, cv::Scalar color) {
+    // output
+    cv::circle(img, best_model.first, 3, cv::Scalar(255,0,255), -1);
+    cv::circle(img, best_model.second, 3, cv::Scalar(255,0,255), -1);
+
+    // calculation
     cv::Point p1 = best_model.first;
     cv::Point p2 = best_model.second;
-    double slope = (p2.y - p1.y) / (double) (p2.x - p1.x + std::numeric_limits<double>::epsilon());
+
     cv::Point p(0,0), q(img.cols, img.rows);
-    p.y = -(p1.x - p.x) * slope + p1.y;
-    q.y = -(p2.x - q.x) * slope + p2.y;
+    if (p1.x != p2.x) {
+        double m = (double) (p1.y - p2.y) / (double) (p1.x - p2.x);
+        double b = p1.y - (m * p1.x);
+        p.y = m * p.x + b;
+        q.y = m * q.x + b;
+    } else {
+        p.x = q.x = p2.x;
+        p.y = 0;
+        q.y = img.rows;
+    }
+
+    cv::circle(img, p1, 4, cv::Scalar(255,0,255), 2);
+    cv::circle(img, p2, 4, cv::Scalar(255,0,255), 2);
     cv::line(img, p, q, color, 2);
 }
 
@@ -114,27 +130,30 @@ int main(int argc, char const *argv[]) {
     // generate a random image
     cv::Mat sample = generateRandomImage(cv::Size(600, 600), 2000);
 
-    // 2d point list
-    std::vector<cv::Point> point_list;
-    cv::findNonZero(sample, point_list);
+    unsigned int num_points = cv::countNonZero(sample);
 
-    // ransac fit line
-    std::pair<cv::Point, cv::Point> best_model;
-    std::vector<bool> inliers;
-    double distance_average;
-    fitLineRansac(point_list, 100, 100, 10, best_model, inliers, distance_average);
+    if (num_points) {
+        // 2d point list
+        std::vector<cv::Point> point_list;
+        cv::findNonZero(sample, point_list);
 
-    // output line
-    cv::Mat output;
-    cv::cvtColor(sample, output, cv::COLOR_GRAY2BGR);
-    for (size_t i = 0; i < inliers.size(); i++)
-        if(inliers[i])
-            output.at<cv::Vec3b>(point_list[i]) = cv::Vec3b(0, 255, 0);
-    drawStraightLine(output, best_model, cv::Scalar(0, 0, 255));
+        // ransac fit line
+        std::pair<cv::Point, cv::Point> best_model;
+        std::vector<bool> inliers;
+        double distance_average;
+        fitLineRansac(point_list, 100, 100, 5, best_model, inliers, distance_average);
+
+        // output line
+        cv::Mat output;
+        cv::cvtColor(sample, output, cv::COLOR_GRAY2BGR);
+        for (size_t i = 0; i < inliers.size(); i++)
+            if(inliers[i])
+                output.at<cv::Vec3b>(point_list[i]) = cv::Vec3b(0, 255, 0);
+        drawStraightLine(output, best_model, cv::Scalar(0, 0, 255));
+        cv::imshow("output", output);
+    }
 
     // ransac fit line algorithm
-    cv::imshow("sample", sample);
-    cv::imshow("output", output);
     cv::waitKey();
 
     return 0;

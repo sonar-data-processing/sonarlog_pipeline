@@ -44,7 +44,7 @@ void Application::process_next_sample() {
 
     /* image enhancement */
     cv::Mat enhanced;
-    preprocessing::adaptative_clahe(src, enhanced);
+    preprocessing::adaptive_clahe(src, enhanced);
 
     // /* denoising process */
     // cv::Mat denoised;

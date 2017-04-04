@@ -15,7 +15,8 @@ int main (int argc,char **argv)
 {
     // Reference http://image.diku.dk/imagecanon/material/PeronaMalik1990.pdf (IEEE PAMI v12 n 7 1990)
     // Mat x = imread("/home/romulo/Desktop/lena30.jpg",CV_LOAD_IMAGE_GRAYSCALE);
-    Mat x = imread("/home/romulo/workspace/sonar_toolkit/sonarlog_pipeline/build/sonar.jpg",CV_LOAD_IMAGE_GRAYSCALE);
+    // Mat x = imread("/home/romulo/Downloads/lena.jpg",CV_LOAD_IMAGE_GRAYSCALE);
+    Mat x = imread("/home/romulo/workspace/sonar_toolkit/sonarlog_pipeline/build/cart_filtered.jpg",CV_LOAD_IMAGE_GRAYSCALE);
     Mat x0;
     x.convertTo(x0, CV_32FC1);
 
