@@ -30,159 +30,61 @@ inline void load_sonar_holder(const base::samples::Sonar& sample, sonar_processi
         sample.beam_count);
 }
 
-template <typename T>
-std::vector<T> mat2vector(cv::Mat mat) {
-    std::vector<T> array;
-    if (mat.isContinuous()) {
-        array.assign((T*)mat.datastart, (T*)mat.dataend);
-    } else {
-        for (int i = 0; i < mat.rows; ++i) {
-            array.insert(array.end(), (T*)mat.ptr<uchar>(i), (T*)mat.ptr<uchar>(i)+mat.cols);
-        }
-    }
-    return array;
-}
-
-// bool pipeline_detection(const cv::Mat& src, const cv::Mat& mask, float angle, int step_angle, int step_scan) {
-//     cv::Point center(src.cols * 0.5, src.rows * 0.5);
-//     bool found = false;
-//     double best_score = 1;
-//     cv::Point b1, b2;
-//
-//     // find y-limits of mask
-//     cv::Mat mask_y_center = mask.col(center.x);
-//     int y_min = -1, y_max = -1;
-//     bool found_y_min = false, found_y_max = false;
-//     int i = 0, j = mask.rows;
-//     while(!found_y_min || !found_y_max) {
-//         if (!found_y_min && mask_y_center.at<uchar>(i++) == 255) {
-//             y_min = i;
-//             found_y_min = true;
-//         }
-//         if (!found_y_max && mask_y_center.at<uchar>(j--) == 255) {
-//             y_max = j;
-//             found_y_max = true;
-//         }
-//     }
-//
-//     // pipeline searching
-//     int angle_range = tan(angle * M_PI / 180.0) * (y_max - y_min);
-//
-//     for (size_t i = center.x - angle_range; i < center.x + angle_range; i+=step_angle) {
-//         for (int j = -mask.cols; j < mask.cols; j+=step_scan) {
-//             cv::Point p1(i + j, y_min);
-//             cv::Point p2(center.x + j, y_max);
-//
-//             bool contains_p1 = !(p1.x < 0 || p1.x > mask.cols);
-//             bool contains_p2 = !(p2.x < 0 || p2.x > mask.cols);
-//
-//             if (contains_p1 && contains_p2) {
-//                 cv::LineIterator line_points(mask, p1, p2);
-//
-//                 double accum_sum = 0;
-//                 int valid_pixels = 0;
-//                 for (int k = 0; k < line_points.count; k++, ++line_points) {
-//                     accum_sum += src.at<float>(line_points.pos());
-//                     if(mask.at<uchar>(line_points.pos())== 255)
-//                         valid_pixels++;
-//                 }
-//
-//                 if(valid_pixels) {
-//                     double avg = accum_sum / valid_pixels;
-//                     if (avg < 0.15 && valid_pixels > 150 && best_score > avg) {
-//                         b1 = p1;
-//                         b2 = p2;
-//                         best_score = avg;
-//                     }
-//                 }
-//
-//
-//
-//             }
-//         }
-//     }
-//
-//     if(best_score) {
-//         std::cout << "Y: " << y_min << "," << y_max << std::endl;
-//         cv::Mat out;
-//         cv::cvtColor(src, out, CV_GRAY2BGR);
-//         cv::line(out, b1, b2, cv::Scalar(255,0,0), 2);
-//         cv::imshow("out", out);
-//         cv::waitKey(5);
-//     }
-//
-//     return found;
-// }
-
-bool pipeline_detection(const cv::Mat& src, const cv::Mat& mask, float angle, int step_angle, int step_scan) {
+bool pipeline_detection(const cv::Mat& src, const cv::Mat& mask, std::pair<cv::Point, cv::Point>& best_model, double fit_rate, int min_valid_pixels, float angle, int step_angle, int step_scan) {
     cv::Point center(src.cols * 0.5, src.rows * 0.5);
     bool found = false;
-
     double best_score = 1;
-    cv::Point b1, b2;
+    // cv::Point p, q;
 
     // find y-limits of mask
-    cv::Mat mask_y_center = mask.col(center.x);
-    int y_min = -1, y_max = -1;
-    bool found_y_min = false, found_y_max = false;
-    int i = 0, j = mask.rows;
-    while(!found_y_min || !found_y_max) {
-        if (!found_y_min && mask_y_center.at<uchar>(i++) == 255) {
-            y_min = i;
-            found_y_min = true;
-        }
-        if (!found_y_max && mask_y_center.at<uchar>(j--) == 255) {
-            y_max = j;
-            found_y_max = true;
-        }
-    }
+    // perform two iterators to find the upper and under mask limits on y-axis
+    cv::Mat mask_y_center = mask.col(center.x).t() / 255;
+    std::vector<float> data_mat(mask_y_center.datastart, mask_y_center.dataend);
+    std::vector<float>::iterator min_idx = std::find(data_mat.begin(), data_mat.end(), 1);
+    std::vector<float>::reverse_iterator max_idx = std::find(data_mat.rbegin(), data_mat.rend(), 1);
+    if((min_idx == data_mat.end()) || (max_idx == data_mat.rend()))
+        return found;
+    int y_min = min_idx - data_mat.begin();
+    int y_max = data_mat.rend() - max_idx;
 
-    // pipeline searching
+    // pipeline searching using a sliding line segment
     int angle_range = tan(angle * M_PI / 180.0) * (y_max - y_min);
-
     for (size_t i = center.x - angle_range; i < center.x + angle_range; i+=step_angle) {
         for (int j = -mask.cols; j < mask.cols; j+=step_scan) {
             cv::Point p1(i + j, y_min);
             cv::Point p2(center.x + j, y_max);
 
-            bool contains_p1 = !(p1.x < 0 || p1.x > mask.cols);
-            bool contains_p2 = !(p2.x < 0 || p2.x > mask.cols);
+            // check if the reference points p1 and p2 are contained within the sonar image
+            bool contains_p1 = (p1.x >= 0) && (p1.x <= mask.cols);
+            bool contains_p2 = (p2.x >= 0) && (p2.x <= mask.cols);
+            if(!contains_p1 || !contains_p2)
+                continue;
 
-            if (contains_p1 && contains_p2) {
-                cv::LineIterator line_points(mask, p1, p2);
+            // get all points on the line segment using a 8-connected pixels
+            cv::LineIterator line_points(mask, p1, p2);
 
-                double accum_sum = 0;
-                int valid_pixels = 0;
-                for (int k = 0; k < line_points.count; k++, ++line_points) {
-                    accum_sum += src.at<float>(line_points.pos());
-                    if(mask.at<uchar>(line_points.pos())== 255)
-                        valid_pixels++;
-                }
-
-                if(valid_pixels) {
-                    double avg = accum_sum / valid_pixels;
-                    if (avg < 0.15 && valid_pixels > 150 && best_score > avg) {
-                        b1 = p1;
-                        b2 = p2;
-                        best_score = avg;
-                    }
-                }
-
-
-
+            // calculate the proportional average
+            double accum_sum = 0;
+            int valid_pixels = 0;
+            for (int k = 0; k < line_points.count; k++, ++line_points) {
+                accum_sum += src.at<float>(line_points.pos());
+                if(mask.at<uchar>(line_points.pos()))
+                    valid_pixels++;
             }
+
+            // if there are valid pixels, evaluate the results
+            if (!valid_pixels)
+                continue;
+            double avg = accum_sum / valid_pixels;
+            if ((avg > fit_rate) || (valid_pixels < min_valid_pixels) || avg > best_score)
+                continue;
+
+            // store the best results
+            best_model = std::make_pair(p1, p2);
+            best_score = avg;
+            found = true;
         }
     }
-
-    if(best_score) {
-        std::cout << "Y: " << y_min << "," << y_max << std::endl;
-        cv::Mat out;
-        cv::cvtColor(src, out, CV_GRAY2BGR);
-        cv::line(out, b1, b2, cv::Scalar(255,0,0), 2);
-        cv::imshow("out", out);
-        cv::waitKey(5);
-    }
-
     return found;
 }
 
@@ -276,9 +178,13 @@ int main(int argc, char const *argv[]) {
                 cv::imshow("cart_filtered", cart_filtered);
 
                 // pipeline detection
-                if (pipeline_detection(cart_filtered, cart_mask, 30, 10, 5)) {
-                // if (pipeline_detection(cart_filtered, cart_mask, matches) {
-                //     cv::imshow("matches", matches);
+                std::pair<cv::Point, cv::Point> best_model;
+                if (pipeline_detection(cart_filtered, cart_mask, best_model, 0.15, 150, 30, 10, 5)) {
+                    cv::Mat cart_out;
+                    cv::cvtColor(cart_raw, cart_out, CV_GRAY2BGR);
+                    cart_out.convertTo(cart_out, CV_8U, 255);
+                    cv::line(cart_out, best_model.first, best_model.second, cv::Scalar(0,255,0), 2, CV_AA);
+                    cv::imshow("cart_out", cart_out);
                 }
                 cv::waitKey(5);
             }
