@@ -49,7 +49,7 @@ bool pipeline_detection(const cv::Mat& src, const cv::Mat& mask, std::pair<cv::P
 
     // pipeline searching using a sliding line segment
     int angle_range = tan(angle * M_PI / 180.0) * (y_max - y_min);
-    for (size_t i = center.x - angle_range; i < center.x + angle_range; i+=step_angle) {
+    for (int i = center.x - angle_range; i < center.x + angle_range; i+=step_angle) {
         for (int j = -mask.cols; j < mask.cols; j+=step_scan) {
             cv::Point p1(i + j, y_min);
             cv::Point p2(center.x + j, y_max);
@@ -57,7 +57,7 @@ bool pipeline_detection(const cv::Mat& src, const cv::Mat& mask, std::pair<cv::P
             // check if the reference points p1 and p2 are contained within the sonar image
             bool contains_p1 = (p1.x >= 0) && (p1.x <= mask.cols);
             bool contains_p2 = (p2.x >= 0) && (p2.x <= mask.cols);
-            if(!contains_p1 || !contains_p2)
+            if(!contains_p1 && !contains_p2)
                 continue;
 
             // get all points on the line segment using a 8-connected pixels
@@ -117,26 +117,33 @@ cv::Mat insonification_correction (const cv::Mat& src, const cv::Mat& mask) {
     return dst;
 }
 
+cv::Point rotatePoint(const cv::Point& p, const cv::Point& center, float angle) {
+    cv::Point trans_p = p - center;
+    cv::Point rot_p;
+    rot_p.x = std::cos(angle) * trans_p.x - std::sin(angle) * trans_p.y;
+    rot_p.y = std::sin(angle) * trans_p.x + std::cos(angle) * trans_p.y;
+    return (rot_p + center);
+}
 
 int main(int argc, char const *argv[]) {
 
     const std::string logfiles[] = {
-        DATA_PATH_STRING + "/logs/pipeline/pipeline_parallel.2.log",
-        DATA_PATH_STRING + "/logs/pipeline/pipeline_parallel.1.log",
         DATA_PATH_STRING + "/logs/pipeline/pipeline_parallel.0.log",
         DATA_PATH_STRING + "/logs/pipeline-front.0.log",
+        DATA_PATH_STRING + "/logs/pipeline/pipeline_parallel.1.log",
+        DATA_PATH_STRING + "/logs/pipeline/pipeline_parallel.2.log",
     };
 
     uint num_logfiles = sizeof(logfiles) / sizeof(std::string);
     RLS rls(3);
     sonar_processing::SonarHolder sonar_holder;
     base::samples::Sonar sample;
+    bool keep_horizontal = false, keep_vertical = false;
 
     for (size_t i = 0; i < num_logfiles; i++) {
         rock_util::LogReader reader(logfiles[i]);
         rock_util::LogStream stream = reader.stream("gemini.sonar_samples");
 
-        int count = 0;
         while (stream.current_sample_index() < stream.total_samples()) {
 
             clock_t tStart = clock();
@@ -149,45 +156,69 @@ int main(int argc, char const *argv[]) {
             cv::resize(cart_raw, cart_raw, cv::Size(), 0.4, 0.4);
 
             /* drawable area */
-            cv::Mat cart_drawable_area = sonar_holder.cart_image_mask();
-            cv::resize(cart_drawable_area, cart_drawable_area, cart_raw.size());
+            cv::Mat cart_mask = sonar_holder.cart_image_mask();
+            cv::resize(cart_mask, cart_mask, cart_raw.size());
 
             /* denoising */
             cv::Mat cart_denoised = rls.sliding_window(cart_raw);
+            if(rls.getBuffer_size() < rls.getWindow_size()) continue;
 
             /* cartesian roi image */
-            cv::Mat cart_mask = preprocessing::extract_cartesian_mask(cart_denoised, cart_drawable_area, sonar_holder.bearings(), sonar_holder.bin_count(), sonar_holder.beam_count(), 0.1);
+            cv::Mat cart_roi = preprocessing::extract_cartesian_mask(cart_denoised, cart_mask, sonar_holder.bearings(), sonar_holder.bin_count(), sonar_holder.beam_count(), 0.1);
 
             /* insonification correction */
-            cv::Mat cart_enhanced = insonification_correction(cart_denoised, cart_mask);
+            cv::Mat cart_enhanced = insonification_correction(cart_denoised, cart_roi);
 
             /* filtering */
             cv::Mat cart_aux, cart_filtered;
             cart_enhanced.convertTo(cart_aux, CV_8U, 255);
             preprocessing::adaptive_clahe(cart_aux, cart_aux, 4);
             cv::boxFilter(cart_aux, cart_aux, CV_8U, cv::Size(5,5));
-            cart_filtered = cart_aux & cart_mask;
+            cart_filtered = cart_aux & cart_roi;
             cart_filtered.convertTo(cart_filtered, CV_32F, 1.0 / 255);
             cv::multiply(cart_filtered, cart_filtered, cart_filtered);
 
             /* output results */
-            if (++count > rls.getWindow_size()) {
-                cv::imshow("cart_raw", cart_raw);
-                cv::imshow("cart_denoised", cart_denoised);
-                cv::imshow("cart_enhanced", cart_enhanced);
-                cv::imshow("cart_filtered", cart_filtered);
+            cv::imshow("cart_raw", cart_raw);
+            cv::imshow("cart_roi", cart_roi);
+            cv::imshow("cart_denoised", cart_denoised);
+            cv::imshow("cart_enhanced", cart_enhanced);
+            cv::imshow("cart_filtered", cart_filtered);
 
-                // pipeline detection
-                std::pair<cv::Point, cv::Point> best_model;
-                if (pipeline_detection(cart_filtered, cart_mask, best_model, 0.15, 150, 30, 10, 5)) {
-                    cv::Mat cart_out;
-                    cv::cvtColor(cart_raw, cart_out, CV_GRAY2BGR);
-                    cart_out.convertTo(cart_out, CV_8U, 255);
-                    cv::line(cart_out, best_model.first, best_model.second, cv::Scalar(0,255,0), 2, CV_AA);
-                    cv::imshow("cart_out", cart_out);
-                }
-                cv::waitKey(5);
+            // pipeline detection
+            std::pair<cv::Point, cv::Point> best_model;
+            bool found = false;
+            cv::Point center(cart_raw.cols * 0.5, cart_raw.rows * 0.5);
+            if(keep_vertical || (!keep_vertical && !keep_horizontal)) {
+                found = pipeline_detection(cart_filtered, cart_roi, best_model, 0.15, 150, 30, 10, 5);
+                keep_vertical = found;
+                keep_horizontal = !found;
             }
+
+            if(keep_horizontal) {
+                found = pipeline_detection(cart_filtered.t(), cart_roi.t(), best_model, 0.15, 150, 10, 5, 5);
+                keep_horizontal = found;
+                keep_vertical = !found;
+                if(found) {
+                    cv::Point p1(best_model.first.y, best_model.first.x);
+                    cv::Point p2(best_model.second.y, best_model.second.x);
+                    best_model.first = p1;
+                    best_model.second = p2;
+                }
+            }
+
+            std::cout << "Vertical? " << keep_vertical << " | Horizontal? " << keep_horizontal << std::endl;
+
+            if (found) {
+                std::cout << best_model.first << "," << best_model.second << std::endl;
+                cv::Mat cart_out;
+                cv::cvtColor(cart_raw, cart_out, CV_GRAY2BGR);
+                cart_out.convertTo(cart_out, CV_8UC3, 255);
+                cv::line(cart_out, best_model.first, best_model.second, cv::Scalar(0,255,0), 2, CV_AA);
+                cv::imshow("cart_out", cart_out);
+            }
+
+            cv::waitKey(5);
             clock_t tEnd = clock();
             double elapsed_secs = double (tEnd - tStart) / CLOCKS_PER_SEC;
             std::cout << " ==================== FPS: " << (1.0 / elapsed_secs) << std::endl;
