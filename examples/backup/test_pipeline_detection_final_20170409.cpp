@@ -31,34 +31,36 @@ inline void load_sonar_holder(const base::samples::Sonar& sample, sonar_processi
         sample.beam_count);
 }
 
-bool pipeline_detection(const cv::Mat& src, const cv::Mat& mask, std::pair<cv::Point2f, cv::Point2f>& best_model, double fit_rate, float angle, int step_angle, int step_scan) {
+bool pipeline_detection(const cv::Mat& src, const cv::Mat& mask, std::pair<cv::Point2f, cv::Point2f>& best_model, double fit_rate, int min_valid_pixels, float angle, int step_angle, int step_scan) {
+    cv::Point2f center(src.cols * 0.5, src.rows * 0.5);
     bool found = false;
     double best_score = 1;
 
-    // find mask limits
-    cv::Mat points;
-    cv::findNonZero(mask, points);
-    cv::Rect rect = cv::boundingRect(points);
-
-    double f = (rect.width > rect.height) ? 0.9 : 0.5;
-    size_t min_valid_pixels = (rect.height) * f;
+    // find y-limits of mask
+    // perform two iterators to find the upper and under mask limits on y-axis
+    cv::Mat mask_y_center = mask.col(center.x).t() / 255;
+    std::vector<float> data_mat(mask_y_center.datastart, mask_y_center.dataend);
+    std::vector<float>::iterator min_idx = std::find(data_mat.begin(), data_mat.end(), 1);
+    std::vector<float>::reverse_iterator max_idx = std::find(data_mat.rbegin(), data_mat.rend(), 1);
+    if((min_idx == data_mat.end()) || (max_idx == data_mat.rend()))
+        return found;
+    int y_min = min_idx - data_mat.begin();
+    int y_max = data_mat.rend() - max_idx;
+    double f = (src.cols > src.rows) ? 0.9 : 0.4;
+    min_valid_pixels = (y_max - y_min) * f;
 
     // pipeline searching using a sliding line segment
-    cv::Point2f center(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
-    int angle_range = tan(angle * M_PI / 180.0) * rect.height;
-    int corner_x = rect.x + rect.width;
-    for (int i = (center.x - angle_range); i < (center.x + angle_range); i += step_angle) {
-        for (int j = -mask.cols; j < mask.cols; j += step_scan) {
-            cv::Point p1(i + j, rect.y);
-            cv::Point p2(center.x + j, rect.y + rect.height - 1);
+    int angle_range = tan(angle * M_PI / 180.0) * (y_max - y_min);
+    for (int i = center.x - angle_range; i < center.x + angle_range; i+=step_angle) {
+        for (int j = -mask.cols; j < mask.cols; j+=step_scan) {
+            cv::Point2f p1(i + j, y_min);
+            cv::Point2f p2(center.x + j, y_max);
 
-            // check if the reference points p1 and p2 are contained within the mask image
-            if(!rect.contains(p1) && !rect.contains(p2)) {
-                if(p1.x > corner_x && p2.x > corner_x)
-                    break;
-                else
-                    continue;
-            }
+            // check if the reference points p1 and p2 are contained within the sonar image
+            bool contains_p1 = (p1.x >= 0) && (p1.x <= mask.cols);
+            bool contains_p2 = (p2.x >= 0) && (p2.x <= mask.cols);
+            if(!contains_p1 || !contains_p2)
+                continue;
 
             // get all points on the line segment using a 8-connected pixels
             cv::LineIterator line_points(mask, p1, p2);
@@ -73,15 +75,15 @@ bool pipeline_detection(const cv::Mat& src, const cv::Mat& mask, std::pair<cv::P
             }
 
             // if there are valid pixels, evaluate the results
-            if (valid_pixels < min_valid_pixels)
+            if (!valid_pixels)
                 continue;
+
             double avg = accum_sum / valid_pixels;
             if ((avg > fit_rate) || (valid_pixels < min_valid_pixels) || avg > best_score)
                 continue;
 
             // store the best results
-            cv::clipLine(rect, p1, p2);
-            best_model = std::make_pair(cv::Point2f(p1.x, p1.y), cv::Point2f(p2.x, p2.y));
+            best_model = std::make_pair(p1, p2);
             best_score = avg;
             found = true;
         }
@@ -151,6 +153,8 @@ int main(int argc, char const *argv[]) {
     sonar_processing::SonarHolder sonar_holder;
     base::samples::Sonar sample;
     size_t start_index = (argc == 2) ? atoi(argv[1]) : 0;
+    // bool keep_horizontal = false, keep_vertical = false;
+    bool scan_vertical = true;
 
     for (size_t i = 0; i < num_logfiles; i++) {
         rock_util::LogReader reader(logfiles[i]);
@@ -166,7 +170,7 @@ int main(int argc, char const *argv[]) {
             load_sonar_holder(sample, sonar_holder);
 
             /* current frame */
-            cv::Mat cart_raw = sonar_holder.cart_image();
+            cv::Mat cart_raw = sonar_holder.cart_image() * 1.2;
             cv::resize(cart_raw, cart_raw, cv::Size(), 0.4, 0.4);
 
             /* drawable area */
@@ -183,15 +187,15 @@ int main(int argc, char const *argv[]) {
             /* insonification correction */
             cv::Mat cart_enhanced = insonification_correction(cart_denoised, cart_roi);
 
-            /* filtering */
+            // /* filtering */
             cv::Mat cart_aux, cart_filtered;
             cart_enhanced.convertTo(cart_aux, CV_8U, 255);
-            preprocessing::adaptive_clahe(cart_aux, cart_aux, 4);
-            cv::GaussianBlur(cart_aux, cart_aux, cv::Size(5,5), 0, 0);
+            // preprocessing::adaptive_clahe(cart_aux, cart_aux, 4);
             // cv::boxFilter(cart_aux, cart_aux, CV_8U, cv::Size(5,5));
             cart_filtered = cart_aux & cart_roi;
             cart_filtered.convertTo(cart_filtered, CV_32F, 1.0 / 255);
-            cv::multiply(cart_filtered, cart_filtered, cart_filtered);
+            // cv::multiply(cart_filtered, cart_filtered, cart_filtered);
+
 
             /* output results */
             cv::imshow("cart_raw", cart_raw);
@@ -200,42 +204,34 @@ int main(int argc, char const *argv[]) {
             cv::imshow("cart_enhanced", cart_enhanced);
             cv::imshow("cart_filtered", cart_filtered);
 
-            // cv::Mat debug = cart_enhanced.clone();
-            // debug.convertTo(debug, CV_8U, 255);
-            // debug = debug & cart_roi;
-            // cv::imshow("debug1", debug);
-            // // preprocessing::adaptive_clahe(debug, debug, 4);
-            // cv::GaussianBlur(debug, debug, cv::Size(5,5), 0, 0);
-            // debug.convertTo(debug, CV_32F, 1.0 / 255);
-            // cv::multiply(debug, debug, debug);
-            // debug = insonification_correction(debug, cart_roi);
-            // // // cv::normalize(debug, debug, 0, 1, cv::NORM_MINMAX);
-            // // // debug = 1 - debug;
-            // cv::imshow("debug2", debug);
-            // // preprocessing::adaptive_clahe(debug, debug, 4);
-
-            // // pipeline detection
+            // pipeline detection
             std::pair<cv::Point2f, cv::Point2f> best_model;
             bool found;
             if(scan_vertical){
-                found = pipeline_detection(cart_filtered, cart_roi, best_model, 0.15, 45, 5, 5);
-                scan_vertical = found;
-            } else {
-                found = pipeline_detection(cart_filtered.t(), cart_roi.t(), best_model, 0.15, 45, 5, 5);
-                scan_vertical = !found;
+                found = pipeline_detection(cart_filtered, cart_roi, best_model, 0.15, 150, 30, 5, 5);
+            //     // scan_vertical = found;
+            // // } else {
+            // //     found = pipeline_detection(cart_filtered.t(), cart_roi.t(), best_model, 0.15, 150, 40, 10, 5);
+            // //     scan_vertical = !found;
             }
-            std::cout << "Vertical: " << scan_vertical << ", Horizontal: " << !scan_vertical << std::endl;
-
+            //
+            // std::cout << "Vertical: " << scan_vertical << ", Horizontal: " << !scan_vertical << std::endl;
             if (found) {
                 cv::Point2f p1, p2;
-                if (scan_vertical) {
+                // if (scan_vertical) {
                     p1 = best_model.first;
                     p2 = best_model.second;
-                } else {
-                    p1 = cv::Point2f(best_model.first.y, best_model.first.x);
-                    p2 = cv::Point2f(best_model.second.y, best_model.second.x);
-                }
+                    // get the world coordinates
+                    Eigen::Vector3d pt1 = getWorldPoint(p1, cart_raw.size(), 17);
+                    Eigen::Vector3d pt2 = getWorldPoint(p2, cart_raw.size(), 17);
+                    std::cout << "Pt1: " << pt1.transpose() << std::endl;
+                    std::cout << "Pt2: " << pt2.transpose() << std::endl;
 
+            //     // } else {
+            //     //     p1 = cv::Point2f(best_model.first.y, best_model.first.x);
+            //     //     p2 = cv::Point2f(best_model.second.y, best_model.second.x);
+            //     // }
+            //
                 cv::Mat cart_out;
                 cv::cvtColor(cart_raw, cart_out, CV_GRAY2BGR);
                 cart_out.convertTo(cart_out, CV_8UC3, 255);
@@ -245,7 +241,7 @@ int main(int argc, char const *argv[]) {
                 cv::imshow("cart_out", cart_out);
             }
 
-            cv::waitKey(30);
+            cv::waitKey(0);
             clock_t tEnd = clock();
             double elapsed_secs = double (tEnd - tStart) / CLOCKS_PER_SEC;
             std::cout << " ==================== FPS: " << (1.0 / elapsed_secs) << std::endl;
