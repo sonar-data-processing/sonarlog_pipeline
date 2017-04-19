@@ -50,6 +50,7 @@ cv::Rect getMaskLimits(const cv::Mat& mask) {
 bool pipeline_detection(const cv::Mat& src, const cv::Mat& mask, std::pair<cv::Point2f, cv::Point2f>& best_model, double fit_rate, float angle, int step_angle, int step_scan, int neighborhood = 0) {
     bool found = false;
     double best_score = 1;
+    int counter = 0;
 
     // find mask limits
     cv::Rect rect = getMaskLimits(mask);
@@ -95,16 +96,26 @@ bool pipeline_detection(const cv::Mat& src, const cv::Mat& mask, std::pair<cv::P
                 continue;
             double avg = accum_sum / valid_pixels;
 
+
             if ((avg > fit_rate) || (valid_pixels < min_valid_pixels) || avg > best_score)
                 continue;
 
+            // std::cout << "Avg: " << avg << std::endl;
+            //
+            // cv::Mat out;
+            // cv::cvtColor(src, out, CV_GRAY2BGR);
+            // cv::line(out, p1, p2, cv::Scalar(0,255,0), 1);
+            // cv::imshow("out", out);
+            // cv::waitKey();
+
             // store the best results
-            cv::clipLine(rect, p1, p2);
+            counter++;
             best_model = std::make_pair(cv::Point2f(p1.x, p1.y), cv::Point2f(p2.x, p2.y));
             best_score = avg;
             found = true;
         }
     }
+    std::cout << "Counter: " << counter << std::endl;
     return found;
 }
 
@@ -123,7 +134,7 @@ bool double_check(const cv::Mat& src, const cv::Mat& mask, const std::pair<cv::P
         cv::Point p1(best_model.first.x + j, best_model.first.y);
         cv::Point p2(best_model.second.x + j, best_model.second.y);
 
-        // get all points on the line segment using a 8-connected pixels
+        // // get all points on the line segment using a 8-connected pixels
         cv::LineIterator line_points(mask, p1, p2);
 
         // calculate the proportional average
@@ -144,36 +155,11 @@ bool double_check(const cv::Mat& src, const cv::Mat& mask, const std::pair<cv::P
         averages.push_back(avg);
     }
 
-    cv::normalize(reference_histogram, reference_histogram, 0, 1, cv::NORM_MINMAX);
-
+    // cv::normalize(reference_histogram, reference_histogram, 0, 1, cv::NORM_MINMAX);
     cv::Mat current_histogram(averages);
-    cv::Mat hist_mask = (current_histogram != 0);
-    hist_mask.convertTo(hist_mask, CV_32F, 1.0 / 255);
-    cv::multiply(reference_histogram, hist_mask, reference_histogram);
-
-    cv::Mat hist_diff = reference_histogram - current_histogram;
-
-    double min, max;
-    cv::minMaxIdx(hist_diff, &min, &max, NULL, NULL);
-    std::cout << "Hist_diff: " << hist_diff.t() << std::endl;
-    std::cout << "Min/Max/Diff: " << min << "/" << max << "/" << (max - min) << std::endl;
-
-
-
-
-
-
-    // std::cout << "Hist mask: " << hist_mask.t() << std::endl;
-    //
     // cv::normalize(current_histogram, current_histogram, 0, 1, cv::NORM_MINMAX);
-
-    // cv::Mat hist_diff = reference_histogram - current_histogram;
-
-    // double dist = cv::compareHist(reference_histogram, current_histogram, CV_COMP_BHATTACHARYYA);
-    // std::cout << "Distance Hist: " << dist << std::endl;
-    // cv::Scalar mean, stddev;
-    // cv::meanStdDev(hist_diff, mean, stddev);
-    // std::cout << "Mean: " << mean[0] << ", Stddev: " << stddev[0] << std::endl;
+    double result = cv::compareHist(reference_histogram, current_histogram, CV_COMP_CHISQR);
+    std::cout << "Distance Hist: " << result << std::endl;
 
     // int center_idx = averages.size() / 2;
     // cv::Rect left_side(0, 0, 1, averages.size() / 2);
@@ -200,7 +186,7 @@ bool double_check(const cv::Mat& src, const cv::Mat& mask, const std::pair<cv::P
     // double left_diff = std::fabs(averages[center_idx] - max_left);
     // double right_diff = std::fabs(averages[center_idx] - max_right);
     //
-    // std::cout << "Averages: " << cv::Mat(averages).t() << std::endl;
+    std::cout << "Averages: " << cv::Mat(averages).t() << std::endl;
     // std::cout << "Center/LMax/RMax/LDiff/RDiff: " << averages[center_idx] << " / " << max_left << " / " << max_right << " / " << left_diff << " / " << right_diff << std::endl;
     return true;
     // return (result < 0.11);
@@ -324,34 +310,14 @@ cv::Mat getSymetricData(const cv::Mat& src) {
     return dst;
 }
 
-bool intersectSymetricData(const cv::Mat& src, const std::pair<cv::Point2f, cv::Point2f>& best_model, cv::Rect rect, const cv::Point2f& ref, double threshold = 0.2) {
-    cv::Mat symetric = getSymetricData(src(rect));
-    cv::imshow("symetric", symetric);
-
-    cv::Point2f p1 = best_model.first - ref;
-    cv::Point2f p2 = best_model.second - ref;
-    cv::LineIterator line_points(src, p1, p2);
-
-    int total_pixels = 0;
-    int crossed_pixels = 0;
-
-    for (; total_pixels < line_points.count; total_pixels++, ++line_points) {
-        cv::Point current_point = line_points.pos();
-        if(symetric.at<float>(current_point))
-            crossed_pixels++;
-    }
-
-    double percentage = crossed_pixels * 1.0 / total_pixels;
-    std::cout << "Total/Crossed/Percentage: " << total_pixels << "/" << crossed_pixels << "/" << percentage << std::endl;
-    return (percentage > threshold);
-}
-
 int main(int argc, char const *argv[]) {
 
     const std::string logfiles[] = {
         DATA_PATH_STRING + "/logs/pipeline/testsite.0.log",
-        // DATA_PATH_STRING + "/logs/pipeline/nodata.0.log",
-        // DATA_PATH_STRING + "/logs/pipeline/testsite.1.log",
+        // DATA_PATH_STRING + "/logs/pipeline/pipeline_parallel.0.log",
+        // DATA_PATH_STRING + "/logs/pipeline/pipeline_parallel.1.log",
+        // DATA_PATH_STRING + "/logs/pipeline/pipeline_parallel.2.log",
+        // DATA_PATH_STRING + "/logs/pipeline-front.0.log",
     };
 
     uint num_logfiles = sizeof(logfiles) / sizeof(std::string);
@@ -401,8 +367,15 @@ int main(int argc, char const *argv[]) {
             cv::Mat cart_aux;
             cart_corrected(rect_roi).convertTo(cart_aux, CV_8U, 255);
             preprocessing::adaptive_clahe(cart_aux, cart_aux, 5);
+            // cv::blur(cart_aux, cart_aux, cv::Size(3,3));
             cart_aux.convertTo(cart_aux, CV_32F, 1.0 / 255);
+            // cv::multiply(cart_aux, cart_aux, cart_aux);
+
+            /* discard symetric values on sonar image */
             cv::Mat cart_filtered = cv::Mat::zeros(cart_corrected.size(), CV_32F);
+            // cart_aux = avoidSymetricData(cart_aux);
+            cv::Mat cart_sym = getSymetricData(cart_aux);
+            // continue;
             cart_aux.copyTo(cart_filtered(rect_roi));
 
             /* skip bad frames */
@@ -415,7 +388,7 @@ int main(int argc, char const *argv[]) {
             cv::imshow("cart_denoised", cart_denoised);
             cv::imshow("cart_corrected", cart_corrected);
             cv::imshow("cart_filtered", cart_filtered);
-            cv::imshow("pattern", pattern);
+            cv::imshow("cart_sym", cart_sym);
 
             cv::Mat cart_out;
             cv::cvtColor(cart_raw, cart_out, CV_GRAY2BGR);
@@ -427,32 +400,34 @@ int main(int argc, char const *argv[]) {
                 bool found = false;
                 if(scan_vertical){
                     found = pipeline_detection(cart_filtered, cart_roi, best_model, 0.2, 45, 5, 2);
+                    // if(found) found = double_check(cart_filtered, cart_roi, best_model);
                     scan_vertical = found;
                 } else {
                     found = pipeline_detection(cart_filtered.t(), cart_roi.t(), best_model, 0.2, 45, 5, 5);
+                    // if(found) found = double_check(cart_filtered.t(), cart_roi.t(), best_model);
                     scan_vertical = !found;
                 }
 
                 if (found) {
-                    if(!scan_vertical) {
-                        best_model.first = cv::Point2f(best_model.first.y, best_model.first.x);
-                        best_model.second = cv::Point2f(best_model.second.y, best_model.second.x);
+                    cv::Point2f p1, p2;
+                    if (scan_vertical) {
+                        p1 = best_model.first;
+                        p2 = best_model.second;
+                    } else {
+                        p1 = cv::Point2f(best_model.first.y, best_model.first.x);
+                        p2 = cv::Point2f(best_model.second.y, best_model.second.x);
                     }
 
-                    found = !intersectSymetricData(cart_filtered, best_model, rect_roi, rect_roi.tl());
-
-                    if(found) {
-                        cv::line(cart_out, best_model.first, best_model.second, cv::Scalar(0, 255, 0), 2, CV_AA);
-                        cv::line(cart_out, cv::Point(0, cart_out.rows * 0.5), cv::Point(cart_out.cols - 1, cart_out.rows * 0.5), cv::Scalar(0, 0, 255), 1, CV_AA);
-                        cv::line(cart_out, cv::Point(cart_out.cols * 0.5, 0), cv::Point(cart_out.cols * 0.5, cart_out.rows - 1), cv::Scalar(0, 0, 255), 1, CV_AA);
-                    }
+                    cv::line(cart_out, p1, p2, cv::Scalar(0, 255, 0), 2, CV_AA);
+                    cv::line(cart_out, cv::Point(0, cart_out.rows * 0.5), cv::Point(cart_out.cols - 1, cart_out.rows * 0.5), cv::Scalar(0, 0, 255), 1, CV_AA);
+                    cv::line(cart_out, cv::Point(cart_out.cols * 0.5, 0), cv::Point(cart_out.cols * 0.5, cart_out.rows - 1), cv::Scalar(0, 0, 255), 1, CV_AA);
                 }
             }
 
             std::cout << "Vertical: " << scan_vertical << ", Horizontal: " << !scan_vertical << std::endl;
 
             cv::imshow("cart_out", cart_out);
-            cv::waitKey(5);
+            cv::waitKey();
             clock_t tEnd = clock();
             double elapsed_secs = double (tEnd - tStart) / CLOCKS_PER_SEC;
             std::cout << " ==================== FPS: " << (1.0 / elapsed_secs) << std::endl;

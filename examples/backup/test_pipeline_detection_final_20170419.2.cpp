@@ -95,6 +95,7 @@ bool pipeline_detection(const cv::Mat& src, const cv::Mat& mask, std::pair<cv::P
                 continue;
             double avg = accum_sum / valid_pixels;
 
+
             if ((avg > fit_rate) || (valid_pixels < min_valid_pixels) || avg > best_score)
                 continue;
 
@@ -350,8 +351,10 @@ int main(int argc, char const *argv[]) {
 
     const std::string logfiles[] = {
         DATA_PATH_STRING + "/logs/pipeline/testsite.0.log",
-        // DATA_PATH_STRING + "/logs/pipeline/nodata.0.log",
-        // DATA_PATH_STRING + "/logs/pipeline/testsite.1.log",
+        // DATA_PATH_STRING + "/logs/pipeline/pipeline_parallel.0.log",
+        // DATA_PATH_STRING + "/logs/pipeline/pipeline_parallel.1.log",
+        // DATA_PATH_STRING + "/logs/pipeline/pipeline_parallel.2.log",
+        // DATA_PATH_STRING + "/logs/pipeline-front.0.log",
     };
 
     uint num_logfiles = sizeof(logfiles) / sizeof(std::string);
@@ -401,7 +404,11 @@ int main(int argc, char const *argv[]) {
             cv::Mat cart_aux;
             cart_corrected(rect_roi).convertTo(cart_aux, CV_8U, 255);
             preprocessing::adaptive_clahe(cart_aux, cart_aux, 5);
+            // cv::blur(cart_aux, cart_aux, cv::Size(3,3));
             cart_aux.convertTo(cart_aux, CV_32F, 1.0 / 255);
+            // cv::multiply(cart_aux, cart_aux, cart_aux);
+
+            /* discard symetric values on sonar image */
             cv::Mat cart_filtered = cv::Mat::zeros(cart_corrected.size(), CV_32F);
             cart_aux.copyTo(cart_filtered(rect_roi));
 
@@ -415,7 +422,6 @@ int main(int argc, char const *argv[]) {
             cv::imshow("cart_denoised", cart_denoised);
             cv::imshow("cart_corrected", cart_corrected);
             cv::imshow("cart_filtered", cart_filtered);
-            cv::imshow("pattern", pattern);
 
             cv::Mat cart_out;
             cv::cvtColor(cart_raw, cart_out, CV_GRAY2BGR);
@@ -452,7 +458,7 @@ int main(int argc, char const *argv[]) {
             std::cout << "Vertical: " << scan_vertical << ", Horizontal: " << !scan_vertical << std::endl;
 
             cv::imshow("cart_out", cart_out);
-            cv::waitKey(5);
+            cv::waitKey();
             clock_t tEnd = clock();
             double elapsed_secs = double (tEnd - tStart) / CLOCKS_PER_SEC;
             std::cout << " ==================== FPS: " << (1.0 / elapsed_secs) << std::endl;
