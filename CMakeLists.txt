@@ -29,13 +29,10 @@ set (
 file ( GLOB SRCS RELATIVE ${PROJECT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src/*.cpp )
 list ( REMOVE_ITEM SRCS "src/main.cpp" )
 
-file ( GLOB AKAZE_SOURCES RELATIVE ${PROJECT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src/third_party/akaze/*.cpp)
-
 set (
     SRCS
     ${SRCS}
     ${sonar_processing_SOURCES}
-    ${AKAZE_SOURCES}
 )
 
 set ( SRCS ${SRCS} ${sonar_processing_SOURCES} )
@@ -113,26 +110,4 @@ configure_file (
     ${PROJECT_SOURCE_DIR}/scripts/example2.sh.in
     ${PROJECT_BINARY_DIR}/scripts/example2.sh
     @ONLY
-)
-
-
-file (
-    GLOB THIRD_PARTY_AKAZE_HEADERS
-    ${PROJECT_SOURCE_DIR}/src/third_party/akaze/*.h
-)
-
-configure_file_list (
-    INPUT_FILES ${THIRD_PARTY_AKAZE_HEADERS}
-    OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/include/sonarlog_slam/third_party/akaze"
-)
-
-file (
-    GLOB THIRD_PARTY_HEADERS
-    "${sonarlog_pipeline_SOURCE_DIR}/third_party/*.h"
-    "${sonarlog_pipeline_SOURCE_DIR}/third_party/*.hpp"
-)
-
-configure_file_list (
-    INPUT_FILES ${THIRD_PARTY_HEADERS}
-    OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/include/sonar_target_tracking/third_party"
 )

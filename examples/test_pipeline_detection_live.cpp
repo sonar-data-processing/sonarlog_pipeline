@@ -1,5 +1,6 @@
 #include <iostream>
 #include <cmath>
+#include <sstream>
 #include <algorithm>
 #include <time.h>
 #include <base/samples/Sonar.hpp>
@@ -111,7 +112,7 @@ base::Vector2d getWorldPoint(const cv::Point2f& p, cv::Size size, float range) {
     // sonar resolution
     float sonar_resolution = range / size.height;
 
-    // 3d world coordinates
+    // 2d world coordinates
     float x = q.x * sonar_resolution;
     base::Angle angle = base::Angle::fromRad(atan2(q.y, q.x));
     float y = tan(angle.rad) * x;
@@ -161,6 +162,7 @@ cv::Mat getSymetricData(const cv::Mat& src) {
 
     cv::Mat dst;
     cv::hconcat(out_left, out_right, dst);
+    // cv::imshow("symetric", dst);
     return dst;
 }
 
@@ -185,7 +187,6 @@ bool intersectSymetricData(const cv::Mat& src, const std::pair<cv::Point2f, cv::
 }
 
 bool isBadDepth(const cv::Mat& mask, double range, double percentage = 0.30) {
-    double sonar_resolution = range / mask.cols;
     cv::Point center(mask.cols * 0.5, mask.rows - 1);
     int idx = center.y;
 
@@ -201,9 +202,18 @@ bool isBadDepth(const cv::Mat& mask, double range, double percentage = 0.30) {
     return (distance > (range * percentage));
 }
 
+base::Angle angleBetweenPoints(cv::Point2f p1, cv::Point2f p2) {
+    double theta = std::atan2(p1.y - p2.y, p1.x - p2.x);
+    return base::Angle::fromRad(theta + M_PI_2);
+}
+
 int main(int argc, char const *argv[]) {
 
     const std::string logfiles[] = {
+        // "/arquivos/Logs/gemini/gemini_pipeline_logs/demo_april_20170427/testday.0.log",
+        // "/arquivos/Logs/gemini/gemini_pipeline_logs/demo_april_20170427/testday.1.log",
+        // "/arquivos/Logs/gemini/gemini_pipeline_logs/demo_april_20170427/testday.2.log",
+        // "/arquivos/Logs/gemini/gemini_pipeline_logs/demo_april_20170427/testday.3.log",
         DATA_PATH_STRING + "/logs/pipeline/testsite.0.log",
         // DATA_PATH_STRING + "/logs/pipeline/testsite.1.log",
         // DATA_PATH_STRING + "/logs/pipeline/nodata.0.log",
@@ -224,6 +234,8 @@ int main(int argc, char const *argv[]) {
         rock_util::LogStream stream = reader.stream("gemini.sonar_samples");
         stream.set_current_sample_index(start_index);
         bool scan_vertical = true;
+        cv::VideoWriter video;
+        video.open("./myvideo.mpg", CV_FOURCC('P','I','M','1'), 25, cv::Size(710,410), true);
 
         while (stream.current_sample_index() < stream.total_samples()) {
             clock_t tStart = clock();
@@ -263,16 +275,13 @@ int main(int argc, char const *argv[]) {
             bool bad_quality = isBadQuality(cart_filtered(rect_roi), 3, 3);
             bool bad_depth = isBadDepth(cart_roi, range);
 
-            /* output results */
-            cv::imshow("cart_raw", cart_raw);
-            cv::imshow("cart_roi", cart_roi);
-            cv::imshow("cart_denoised", cart_denoised);
-            cv::imshow("cart_corrected", cart_corrected);
-            cv::imshow("cart_filtered", cart_filtered);
-
             cv::Mat cart_out;
-            cv::cvtColor(cart_raw, cart_out, CV_GRAY2BGR);
-            cart_out.convertTo(cart_out, CV_8UC3, 255);
+            cart_raw.copyTo(cart_out);
+            std::vector< std::vector<cv::Point> > contours;
+            cv::findContours(cart_mask.clone(), contours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE);
+            cv::drawContours(cart_out, contours, -1, cv::Scalar::all(0.5), 1, CV_AA);
+            cart_out.convertTo(cart_out, CV_8U, 255);
+            cv::cvtColor(cart_out, cart_out, CV_GRAY2BGR);
 
             /* pipeline detection */
             bool found = false;
@@ -280,36 +289,57 @@ int main(int argc, char const *argv[]) {
                 std::pair<cv::Point2f, cv::Point2f> best_model;
                 /* scan for a vertical pipeline */
                 if(scan_vertical){
-                    found = pipeline_detection(cart_filtered, cart_roi, best_model, 0.2, 45, 5, 2);
+                    bool hasCandidate = pipeline_detection(cart_filtered, cart_roi, best_model, 0.2, 60, 5, 2);
+                    found = hasCandidate && !intersectSymetricData(cart_filtered(rect_roi), best_model, rect_roi);
                     scan_vertical = found;
                 }
                 /* scan for a horizontal pipeline */
                 else {
-                    found = pipeline_detection(cart_filtered.t(), cart_roi.t(), best_model, 0.2, 45, 5, 5);
+                    bool hasCandidate = pipeline_detection(cart_filtered.t(), cart_roi.t(), best_model, 0.2, 60, 5, 5);
+                    if(hasCandidate) {
+                        best_model.first = cv::Point2f(best_model.first.y, best_model.first.x);
+                        best_model.second = cv::Point2f(best_model.second.y, best_model.second.x);
+                    }
+                    found = hasCandidate && hasCandidate && !intersectSymetricData(cart_filtered(rect_roi), best_model, rect_roi);
                     scan_vertical = !found;
                 }
 
                 /* if a candidate target is found, check if it is contained in a symetric noise with low intensities */
                 if (found) {
-                    if(!scan_vertical) {
-                        best_model.first = cv::Point2f(best_model.first.y, best_model.first.x);
-                        best_model.second = cv::Point2f(best_model.second.y, best_model.second.x);
-                    }
-
-                    found = !intersectSymetricData(cart_filtered(rect_roi), best_model, rect_roi);
-
-                    if(found) {
-                        cv::line(cart_out, best_model.first, best_model.second, cv::Scalar(0, 255, 0), 2, CV_AA);
-                        cv::line(cart_out, cv::Point(0, cart_out.rows * 0.5), cv::Point(cart_out.cols - 1, cart_out.rows * 0.5), cv::Scalar(0, 0, 255), 1, CV_AA);
-                        cv::line(cart_out, cv::Point(cart_out.cols * 0.5, 0), cv::Point(cart_out.cols * 0.5, cart_out.rows - 1), cv::Scalar(0, 0, 255), 1, CV_AA);
-                    }
+                    cv::line(cart_out, best_model.first, best_model.second, cv::Scalar(0, 255, 0), 2, CV_AA);
+                    cv::line(cart_out, cv::Point(0, cart_out.rows * 0.5 - 3), cv::Point(cart_out.cols - 1, cart_out.rows * 0.5 - 3), cv::Scalar(0, 0, 255), 1, CV_AA);
+                    cv::line(cart_out, cv::Point(cart_out.cols * 0.5, 0), cv::Point(cart_out.cols * 0.5, cart_out.rows - 1), cv::Scalar(0, 0, 255), 1, CV_AA);
                 }
             }
 
             std::cout << "Vertical: " << scan_vertical << ", Horizontal: " << !scan_vertical << std::endl;
             std::cout << "Bad Frame? " << bad_quality << "," << bad_depth << std::endl;
 
+            /* output results */
+            cv::imshow("cart_raw", cart_raw);
+            cv::imshow("cart_denoised", cart_denoised);
+            cv::imshow("cart_roi", cart_roi);
+            cv::imshow("cart_corrected", cart_corrected);
+            cv::imshow("cart_filtered", cart_filtered);
             cv::imshow("cart_out", cart_out);
+
+            // int counter = 0;
+            // while(counter++ < 10)
+                // video << cart_out;
+            // std::string savingName = std::to_string(stream.current_sample_index()) + ".jpg";
+            // cv::imwrite(savingName, cart_out);
+            std::stringstream ss;
+            std::string name = "";
+            std::string type = ".jpg";
+            ss << name << (stream.current_sample_index()  - 4)<<type;
+            std::string filename = ss.str();
+            ss.str("");
+
+            cv::imwrite(filename, cart_out);
+
+            if(stream.current_sample_index() > 49)
+                break;
+
             cv::waitKey(5);
             clock_t tEnd = clock();
             double elapsed_secs = double (tEnd - tStart) / CLOCKS_PER_SEC;
